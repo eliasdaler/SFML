@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////
 //
 // SFML - Simple and Fast Multimedia Library
-// Copyright (C) 2007-2017 Laurent Gomila (laurent@sfml-dev.org)
+// Copyright (C) 2007-2018 Laurent Gomila (laurent@sfml-dev.org)
 //
 // This software is provided 'as-is', without any express or implied warranty.
 // In no event will the authors be held liable for any damages arising from the use of this software.
@@ -26,6 +26,7 @@
 // Headers
 ////////////////////////////////////////////////////////////
 #include <SFML/Window/Unix/WindowImplX11.hpp>
+#include <SFML/Window/Unix/ClipboardImpl.hpp>
 #include <SFML/Window/Unix/Display.hpp>
 #include <SFML/Window/Unix/InputImpl.hpp>
 #include <SFML/System/Utf.hpp>
@@ -76,6 +77,21 @@ namespace
                                                       VisibilityChangeMask | PropertyChangeMask;
 
     static const unsigned int             maxTrialsCount = 5;
+
+    // Predicate we use to find key repeat events in processEvent
+    struct KeyRepeatFinder
+    {
+        KeyRepeatFinder(unsigned int keycode, Time time) : keycode(keycode), time(time) {}
+
+        // Predicate operator that checks event type, keycode and timestamp
+        bool operator()(const XEvent& event)
+        {
+            return ((event.type == KeyPress) && (event.xkey.keycode == keycode) && (event.xkey.time - time < 2));
+        }
+
+        unsigned int keycode;
+        Time time;
+    };
 
     // Filter the events received by windows (only allow those matching a specific window)
     Bool checkEvent(::Display*, XEvent* event, XPointer userData)
@@ -360,21 +376,21 @@ namespace
             case XK_Super_R:      return sf::Keyboard::RSystem;
             case XK_Menu:         return sf::Keyboard::Menu;
             case XK_Escape:       return sf::Keyboard::Escape;
-            case XK_semicolon:    return sf::Keyboard::SemiColon;
+            case XK_semicolon:    return sf::Keyboard::Semicolon;
             case XK_slash:        return sf::Keyboard::Slash;
             case XK_equal:        return sf::Keyboard::Equal;
-            case XK_minus:        return sf::Keyboard::Dash;
+            case XK_minus:        return sf::Keyboard::Hyphen;
             case XK_bracketleft:  return sf::Keyboard::LBracket;
             case XK_bracketright: return sf::Keyboard::RBracket;
             case XK_comma:        return sf::Keyboard::Comma;
             case XK_period:       return sf::Keyboard::Period;
             case XK_apostrophe:   return sf::Keyboard::Quote;
-            case XK_backslash:    return sf::Keyboard::BackSlash;
+            case XK_backslash:    return sf::Keyboard::Backslash;
             case XK_grave:        return sf::Keyboard::Tilde;
             case XK_space:        return sf::Keyboard::Space;
-            case XK_Return:       return sf::Keyboard::Return;
-            case XK_KP_Enter:     return sf::Keyboard::Return;
-            case XK_BackSpace:    return sf::Keyboard::BackSpace;
+            case XK_Return:       return sf::Keyboard::Enter;
+            case XK_KP_Enter:     return sf::Keyboard::Enter;
+            case XK_BackSpace:    return sf::Keyboard::Backspace;
             case XK_Tab:          return sf::Keyboard::Tab;
             case XK_Prior:        return sf::Keyboard::PageUp;
             case XK_Next:         return sf::Keyboard::PageDown;
@@ -752,10 +768,21 @@ WindowHandle WindowImplX11::getSystemHandle() const
 void WindowImplX11::processEvents()
 {
     XEvent event;
+
+    // Pick out the events that are interesting for this window
     while (XCheckIfEvent(m_display, &event, &checkEvent, reinterpret_cast<XPointer>(m_window)))
+        m_events.push_back(event);
+
+    // Handle the events for this window that we just picked out
+    while (!m_events.empty())
     {
+        event = m_events.front();
+        m_events.pop_front();
         processEvent(event);
     }
+
+    // Process clipboard window events
+    priv::ClipboardImpl::processEvents();
 }
 
 
@@ -1010,6 +1037,9 @@ void WindowImplX11::setVisible(bool visible)
     if (visible)
     {
         XMapWindow(m_display, m_window);
+
+        if(m_fullscreen)
+            switchToFullscreen();
 
         XFlush(m_display);
 
@@ -1533,29 +1563,23 @@ bool WindowImplX11::processEvent(XEvent& windowEvent)
     // - Discard both duplicated KeyPress and KeyRelease events when KeyRepeatEnabled is false
 
     // Detect repeated key events
-    // (code shamelessly taken from SDL)
     if (windowEvent.type == KeyRelease)
     {
-        // Check if there's a matching KeyPress event in the queue
-        XEvent nextEvent;
-        if (XPending(m_display))
-        {
-            // Grab it but don't remove it from the queue, it still needs to be processed :)
-            XPeekEvent(m_display, &nextEvent);
-            if (nextEvent.type == KeyPress)
-            {
-                // Check if it is a duplicated event (same timestamp as the KeyRelease event)
-                if ((nextEvent.xkey.keycode == windowEvent.xkey.keycode) &&
-                    (nextEvent.xkey.time - windowEvent.xkey.time < 2))
-                {
-                    // If we don't want repeated events, remove the next KeyPress from the queue
-                    if (!m_keyRepeat)
-                        XNextEvent(m_display, &nextEvent);
+        // Find the next KeyPress event with matching keycode and time
+        std::deque<XEvent>::iterator iter = std::find_if(
+            m_events.begin(),
+            m_events.end(),
+            KeyRepeatFinder(windowEvent.xkey.keycode, windowEvent.xkey.time)
+        );
 
-                    // This KeyRelease is a repeated event and we don't want it
-                    return false;
-                }
-            }
+        if (iter != m_events.end())
+        {
+            // If we don't want repeated events, remove the next KeyPress from the queue
+            if (!m_keyRepeat)
+                m_events.erase(iter);
+
+            // This KeyRelease is a repeated event and we don't want it
+            return false;
         }
     }
 
