@@ -158,9 +158,9 @@ bool InputImpl::isKeyPressed(Keyboard::Key key)
 ////////////////////////////////////////////////////////////
 bool InputImpl::isKeyPressed(Keyboard::Scancode code)
 {
-    auto winCode = sfScanToWin(code);
-    auto vkey = MapVirtualKey(winCode, MAPVK_VSC_TO_VK_EX);
-    auto state = GetAsyncKeyState(vkey);
+    WORD winCode = sfScanToWin(code);
+    UINT vkey = MapVirtualKey(winCode, MAPVK_VSC_TO_VK_EX);
+    SHORT state = GetAsyncKeyState(vkey);
     return (state & 0x8000) != 0;
 }
 

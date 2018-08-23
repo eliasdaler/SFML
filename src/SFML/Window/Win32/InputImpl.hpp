@@ -31,7 +31,7 @@
 #include <SFML/Window/Keyboard.hpp>
 #include <SFML/Window/Mouse.hpp>
 
-#include <windows.h>
+#include <windows.h> // WORD
 
 namespace sf
 {
@@ -178,7 +178,7 @@ public:
     ////////////////////////////////////////////////////////////
     static Vector2i getTouchPosition(unsigned int finger, const Window& relativeTo);
 
-    private:
+private:
 
     static WORD sfScanToWin(Keyboard::Scancode code);
 };
